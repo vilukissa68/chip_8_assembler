@@ -1,0 +1,16 @@
+: loop
+CLS
+RET
+SYS 0x01BA
+SYS 0b000011111111
+SYS $25
+JP 0x0100
+SE V8, 0xAC
+SNE V8, 0xAC
+SE V8, V9
+LD VF, 0xFE
+LD VF, VD
+; THIS is comment
+ADD V4, 0xAA
+ADD V1, V2
+SUB V1, V2 ; THIS is comment too
