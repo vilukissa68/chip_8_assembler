@@ -7,10 +7,32 @@ SYS $25
 JP 0x0100
 SE V8, 0xAC
 SNE V8, 0xAC
+SNE V3, V9
 SE V8, V9
-LD VF, 0xFE
-LD VF, VD
 ; THIS is comment
 ADD V4, 0xAA
 ADD V1, V2
-SUB V1, V2 ; THIS is comment too
+OR V1, V2
+AND V1, V2
+XOR V1, V2
+SUB V1, V2 ; Inline comment
+SHR VF
+SHL VF
+SUBN V1, V2 ; Inline comment
+JP V0, 0XABC
+RND VF, 0xA0
+DRW V0, V1, $5
+SKP V0
+SKNP VF
+: lds
+LD VF, 0xFE
+LD VF, VD
+LD I, 0xFFF
+LD VF, DT
+LD VF K
+LD DT VF
+LD ST VF
+LD F, VF
+LD B, VF
+LD I, VA
+LD VA, I

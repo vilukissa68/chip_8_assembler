@@ -2,7 +2,20 @@ use anyhow::{Result, Error, anyhow};
 
 const COMMENT_DELIM: &str = ";";
 
-// Normalize string to hex string
+// Make sure register is 0-F
+fn register(input: &str) -> Result<String> {
+    let mut s: String = input.to_uppercase();
+    if s.contains("V") {
+        s = s.trim_start_matches("V").to_string();
+    } else {
+        return Err(anyhow!("Invalid register: {}", input));
+    }
+    s = format!("{:X}", u8::from_str_radix(&s, 16)?);
+    return Ok(s);
+
+}
+
+// Normalize string to hex string of given length
 fn num(input: &str, length: u64) -> Result<String> {
     let mut s: String = input.to_uppercase();
     if s.contains("X") {
@@ -18,11 +31,9 @@ fn num(input: &str, length: u64) -> Result<String> {
     } else if s.contains("0") {
         s = s.trim_start_matches("0").to_string();
         s = format!("{:X}", u8::from_str_radix(&s, 8)?);
-    }
-    else {
+    } else {
         return Err(anyhow!("Invalid number: {}", input));
     }
-
     if s.len() < length as usize {
         // Pad by pushing zeros to the front
         let mut pad = String::new();
@@ -53,85 +64,91 @@ fn decode(line: &str) -> Result<String> {
         1 => match split[0] {
             "CLS" => return Ok("00E0".to_string()),
             "RET" => return Ok("00EE".to_string()),
-            _ => println!("Unknown instruction: {}", split[0]),
+            _ => return Err(anyhow!("Unknown instruction: {}", split[0])),
         },
         2 => match split[0] {
             "SYS" => {
-                let addr: String = num(split[1], 3).unwrap();
-                return Ok(format!("0{}", addr));
+                return Ok(format!("0{}", num(split[1], 3)?));
             },
             "JP" => {
-                let addr: String = num(split[1], 3).unwrap();
-                return Ok(format!("1{}", addr));
+                return Ok(format!("1{}", num(split[1], 3)?));
             },
             "CALL" => {
-                let addr: String = num(split[1], 3).unwrap();
-                return Ok(format!("2{}", addr));
+                return Ok(format!("2{}", num(split[1], 3)?));
             },
-            _ => println!("Unknown instruction: {}", split[0]),
+            "SHR" => return Ok(format!("8{}06", register(split[1])?)),
+            "SHL" => return Ok(format!("8{}0E", register(split[1])?)),
+            "SKP" => return Ok(format!("E{}9E", register(split[1])?)),
+            "SKNP" => return Ok(format!("E{}A1", register(split[1])?)),
+            _ => return Err(anyhow!("Unknown instruction: {}", split[0])),
         },
         3 => match split[0] {
             "SE" => {
-                let reg1 = split[1].trim_start_matches("V");
-                if reg1.len() != 1 {
-                    return Err(anyhow!("Invalid register: {}", reg1));
-                }
                 if split[2].contains("V") {
-                    let reg2 = split[2].trim_start_matches("V");
-                    if reg2.len() != 1 {
-                        return Err(anyhow!("Invalid register: {}", reg2));
-                    }
-                    return Ok(format!("5{}{}0", reg1, reg2));
-                } else {
-                    let nn = num(split[2], 2).unwrap();
-                    return Ok(format!("3{}{}", reg1, nn));
+                    return Ok(format!("5{}{}0", register(split[1])?, register(split[2])?));
                 }
+                return Ok(format!("3{}{}", register(split[1])?, num(split[2], 2)?));
             },
             "SNE" => {
-                let reg = split[1].trim_start_matches("V");
-                if reg.len() != 1 {
-                    return Err(anyhow!("Invalid register: {}", reg));
+                if split[2].contains("V") {
+                    return Ok(format!("9{}{}0", register(split[1])?, register(split[2])?));
                 }
-                let nn = num(split[2], 2).unwrap();
-                return Ok(format!("4{}{}", reg, nn));
+                return Ok(format!("4{}{}", register(split[1])?, num(split[2], 2)?));
             },
             "LD" => {
-                let reg1 = split[1].trim_start_matches("V");
-                if reg1.len() != 1 {
-                    return Err(anyhow!("Invalid register: {}", reg1));
-                }
-                if split[2].contains("V") {
-                    let reg2 = split[2].trim_start_matches("V");
-                    if reg2.len() != 1 {
-                        return Err(anyhow!("Invalid register: {}", reg2));
+                if split[1] == "I" {
+                    if split[2].contains("V") {
+                        return Ok(format!("F{}55", register(split[2])?));
                     }
-                    return Ok(format!("8{}{}0", reg1, reg2));
+                    return Ok(format!("A{}", num(split[2], 3)?));
                 }
-                let nn = num(split[2], 2).unwrap();
-                return Ok(format!("6{}{}", reg1, nn));
+                else if split[1] == "B" {
+                    return Ok(format!("F{}33", register(split[2])?));
+                } else if split[1] == "F" {
+                    return Ok(format!("F{}29", register(split[2])?));
+                } else if split[1] == "ST" {
+                    return Ok(format!("F{}18", register(split[2])?));
+                } else if split[1] == "DT" {
+                    return Ok(format!("F{}15", register(split[2])?));
+                } else if split[2] == "DT" {
+                    return Ok(format!("F{}07", register(split[1])?));
+                } else if split[2] == "K" {
+                    return Ok(format!("F{}0A", register(split[1])?));
+                } else if split[2] == "I" {
+                    return Ok(format!("F{}65", register(split[1])?));
+                } else if split[2].contains("V") {
+                    return Ok(format!("8{}{}0", register(split[1])?, register(split[2])?));
+                }
+                return Ok(format!("6{}{}", register(split[1])?, num(split[2], 2)?));
             },
             "ADD" => {
-                let reg1 = split[1].trim_start_matches("V");
-                if reg1.len() != 1 {
-                    return Err(anyhow!("Invalid register: {}", reg1));
-                }
                 if split[2].contains("V") {
-                    let reg2 = split[2].trim_start_matches("V");
-                    if reg2.len() != 1 {
-                        return Err(anyhow!("Invalid register: {}", reg2));
-                    }
-                    return Ok(format!("8{}{}4", reg1, reg2));
+                    return Ok(format!("8{}{}4", register(split[1])?, register(split[2])?));
                 }
-
-                let nn = num(split[2], 2).unwrap();
-                return Ok(format!("7{}{}", reg1, nn));
+                return Ok(format!("7{}{}", register(split[1])?, num(split[2], 2)?));
             },
+            "OR" => return Ok(format!("8{}{}1", register(split[1])?, register(split[2])?)),
+            "AND" => return Ok(format!("8{}{}2", register(split[1])?, register(split[2])?)),
+            "XOR" => return Ok(format!("8{}{}3", register(split[1])?, register(split[2])?)),
+            "SUB" => return Ok(format!("8{}{}5", register(split[1])?, register(split[2])?)),
+            "SUBN" => return Ok(format!("8{}{}7", register(split[1])?, register(split[2])?)),
+            "JP" => {
+                if split[1].contains("V0") {
+                    return Ok(format!("B{}", num(split[2], 3)?))
+                }
+                return Err(anyhow!("{} not available for JP use V0", split[1]));
+            }
+            "RND" => return Ok(format!("C{}{}", register(split[1])?, num(split[2],2)?)),
 
-            _ => println!("Unknown instruction: {}", split[0]),
+            _ => return Err(anyhow!("Unknown instruction: {}", split[0])),
         },
-        _ => println!("Unknown instruction: {}", split[0]),
+        4 => match split[0] {
+            // TODO: Check limit for DRW
+            "DRW" => return Ok(format!("D{}{}{}", register(split[1])?, register(split[2])?, num(split[3], 1)?)),
+            _ => return Err(anyhow!("Unknown instruction: {}", split[0])),
+        }
+        _ => return Err(anyhow!("Unknown instruction: {}", split[0])),
     }
-    return Ok("".to_string());
 }
 
 
@@ -141,7 +158,13 @@ fn main() {
     // Read file
     let mut file = std::fs::read_to_string(&args[1]).expect("Unable to read file");
     for (idx, line) in file.lines().enumerate() {
-        let d = decode(line).expect("Error on line {idx}. {line}");
+        let d = decode(line);
+        if d.is_err() {
+            let err_msg = format!("Error on line {} ({})", idx, line);
+            println!("{} | {}", err_msg, d.unwrap_err());
+            return;
+        }
+        let d = d.unwrap();
         println!(" {:30} | {}", line, d);
     }
 }
