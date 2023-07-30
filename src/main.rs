@@ -1,6 +1,27 @@
-use anyhow::{Result, Error, anyhow};
+use anyhow::{Result, anyhow};
 
 const COMMENT_DELIM: &str = ";";
+const LABEL_DELIM: &str = ":";
+//const MAX_MEMORY: usize = 4096;
+
+static INSTRCTIONS: &'static [&'static str] = &["CLS", "RET", "SYS", "JP", "CALL", "SE", "SNE", "LD", "ADD", "OR", "AND", "XOR", "SUB", "SHR", "SUBN", "SHL", "RND", "DRW", "SKP", "SKNP"];
+
+#[derive(Debug)]
+struct JumpLabel {
+    name: String, // Name in source code
+    address: u16, // Address in memory
+    address_str: String, // Address in string form
+    size: u16, // Size in bytes (2 per instruction)
+    instructions: Vec<String>,
+}
+
+#[derive(Debug)]
+struct AliasLabel {
+    from: String, // Change from this
+    to: String, // To this
+}
+
+
 
 // Make sure register is 0-F
 fn register(input: &str) -> Result<String> {
@@ -28,9 +49,7 @@ fn num(input: &str, length: u64) -> Result<String> {
         s = format!("{:X}", u8::from_str_radix(&s, 2)?);
     } else if s.contains("$") {
         s = s.trim_start_matches("$").to_string();
-    } else if s.contains("0") {
-        s = s.trim_start_matches("0").to_string();
-        s = format!("{:X}", u8::from_str_radix(&s, 8)?);
+        s = format!("{:X}", u8::from_str_radix(&s, 10)?);
     } else {
         return Err(anyhow!("Invalid number: {}", input));
     }
@@ -46,20 +65,147 @@ fn num(input: &str, length: u64) -> Result<String> {
 
 }
 
-fn decode(line: &str) -> Result<String> {
-    // Remove comments
-    let line = &line[0..line.find(COMMENT_DELIM).unwrap_or(line.len())].trim();
-    let line = line.replace(",", " ");
-    if line.len() == 0 {
-        return Ok("".to_string());
+fn preprocess(file: String) -> (Vec<String>, Vec<AliasLabel>, Vec<JumpLabel>) {
+
+    let mut output: Vec<String> = Vec::new();
+
+    // Aliases
+    let mut jump_labels: Vec<JumpLabel> = Vec::new();
+    let mut alias_labels: Vec<AliasLabel> = Vec::new();
+
+    // Remove unnecessary characters
+    for (_idx, line) in file.lines().enumerate() {
+        let line = &line[0..line.find(COMMENT_DELIM).unwrap_or(line.len())].trim();
+        let line = line.replace(",", " ");
+        let line = line.to_ascii_uppercase();
+        if line.len() > 0 {
+            output.push(line);
+        }
     }
 
+    // Find labels
+    let mut tracking_lable = false;
+    let mut tracking_idx = 0;
+    for (_idx, line) in output.iter_mut().enumerate() {
+
+        if line.starts_with(LABEL_DELIM) {
+            let split = line.split_whitespace().collect::<Vec<&str>>();
+
+            // Detect alias
+            if split[0] == (format!{"{}ALIAS", LABEL_DELIM}).as_str() {
+                alias_labels.push(AliasLabel { from: (split[1]).to_string(), to: (split[2]).to_string() });
+            } else if split[0] == LABEL_DELIM {
+
+                // Detect jump labels
+                if !tracking_lable {
+                    tracking_lable = true;
+                } else {
+                    tracking_idx += 1;
+                }
+
+                let label = JumpLabel {
+                    name: split[1].to_string(),
+                    address: u16::max_value(), // Use max since no address has been given yet
+                    address_str: String::new(),
+                    size: 0, // Start with 0 since no data added to label yet
+                    instructions: Vec::new(),
+                };
+
+                jump_labels.push(label);
+            }
+        }  else {
+            if tracking_lable {
+                // Separate between data and jumps
+                let split = line.split_whitespace().collect::<Vec<&str>>();
+                if INSTRCTIONS.contains(&split[0]) {
+                    jump_labels[tracking_idx].size += 2; // Add size
+                    jump_labels[tracking_idx].instructions.push(line.to_string()); // Add size
+                } else {
+                    // Normalize data to hex
+                    for (_idx, data) in split.iter().enumerate() {
+                        let data = num(data, 2).unwrap();
+                        jump_labels[tracking_idx].size += 2; // Add size
+                        jump_labels[tracking_idx].instructions.push(data); // Add size
+                    }
+                }
+            }
+        }
+        // Start addressing from 0x200 which is the start of the program
+        let mut current_address = 0x200;
+
+        // Find start label
+        for label in &mut jump_labels {
+            if label.name == "START" {
+                label.address = current_address;
+                current_address += label.size; // TODO: Check that there is not off by one error here
+            }
+        }
+        // Find all other labels
+        for label in &mut jump_labels {
+            if label.name != "START" {
+                label.address = current_address;
+                current_address += label.size; // TODO: Check that there is not off by one error here
+            }
+        }
+
+        // Convert addresses to hex strings
+        for label in &mut jump_labels {
+            label.address_str = format!("0x{:X}", label.address);
+        }
+    }
+
+    // Remove aliases from output
+    let remove_str = format!{"{}ALIAS", LABEL_DELIM};
+    output.retain(|x| !x.starts_with(remove_str.as_str()));
+
+    return (output, alias_labels, jump_labels);
+}
+
+fn decode(line: &str, aliases: &Vec<AliasLabel>, jumps: &Vec<JumpLabel>) -> Result<String> {
     // Check for label
-    if line.contains(":") {
-        return Ok("".to_string());
+    let mut split = line.split_whitespace().collect::<Vec<&str>>();
+
+    if split[0] == ":" {
+        // Return jump address
+        for jump in jumps {
+            if split[1] == jump.name {
+                // Addresses are always 3 nibbles long for one 0 is needed to pad
+                let address = format!("0{:X}", jump.address);
+                return Ok(address);
+            }
+        }
+        return Err(anyhow!("Unknown label : {}", split[1]));
     }
 
-    let mut split = line.split_whitespace().collect::<Vec<&str>>();
+    // Check split for aliases
+    for c in split.iter_mut() {
+        for alias in aliases {
+            if *c == alias.from {
+                *c = &alias.to;
+            }
+        }
+    }
+
+    // Check split for jumps
+    for c in split.iter_mut() {
+        for jump in jumps {
+            if *c == jump.name {
+                *c = &jump.address_str;
+            }
+        }
+    }
+
+    // Handle data labels
+    if split[0].starts_with("0X") || split[0].starts_with("0B") || split[0].starts_with("$") {
+        let mut data = String::new();
+        for i in 0..split.len() {
+            let num = num(split[i], 2)?;
+            data.push_str(&num);
+        }
+        return Ok(data.replace("0X", ""));
+    }
+
+
     match split.len() {
         1 => match split[0] {
             "CLS" => return Ok("00E0".to_string()),
@@ -155,10 +301,15 @@ fn decode(line: &str) -> Result<String> {
 fn main() {
     // Parse command line arguments
     let args: Vec<String> = std::env::args().collect();
+
+    // Init memory map
+    //let mut memory: [u8; MAX_MEMORY] = [0; MAX_MEMORY];
+
     // Read file
-    let mut file = std::fs::read_to_string(&args[1]).expect("Unable to read file");
-    for (idx, line) in file.lines().enumerate() {
-        let d = decode(line);
+    let file = std::fs::read_to_string(&args[1]).expect("Unable to read file");
+    let (mut preprocessed, aliases, jumps) = preprocess(file);
+    for (idx, line) in preprocessed.iter_mut().enumerate() {
+        let d = decode(line, &aliases, &jumps);
         if d.is_err() {
             let err_msg = format!("Error on line {} ({})", idx, line);
             println!("{} | {}", err_msg, d.unwrap_err());

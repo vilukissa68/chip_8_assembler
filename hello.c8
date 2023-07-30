@@ -1,3 +1,5 @@
+:alias flags VA
+
 : loop
 CLS
 RET
@@ -21,18 +23,35 @@ SHL VF
 SUBN V1, V2 ; Inline comment
 JP V0, 0XABC
 RND VF, 0xA0
-DRW V0, V1, $5
+DRW V0, V1, $12
 SKP V0
 SKNP VF
+
 : lds
 LD VF, 0xFE
 LD VF, VD
 LD I, 0xFFF
 LD VF, DT
 LD VF K
-LD DT VF
+LD DT flags
 LD ST VF
 LD F, VF
 LD B, VF
 LD I, VA
 LD VA, I
+
+: jump
+JP V0, loop
+JP V0, jump
+JP V0, lds
+JP loop
+
+: data
+0x0B
+$255
+0x03, $10, 0x05, 0xFF, 0xAA
+0x03, 0x04, 0x05, 0xFF, 0xAA
+0x03, 0x04, 0x05, 0xFF, 0xAA
+0x03, 0x04, 0x05, 0xFF, 0xAA
+
+LD I data
