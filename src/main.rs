@@ -1,12 +1,16 @@
 use anyhow::{Result, anyhow};
+use std::fs::File;
+use std::io::{BufRead, BufReader, Write};
 
 const COMMENT_DELIM: &str = ";";
 const LABEL_DELIM: &str = ":";
-//const MAX_MEMORY: usize = 4096;
+const MAX_MEMORY: usize = 4096;
+const PROGRAM_START: usize = 0x200;
+
 
 static INSTRCTIONS: &'static [&'static str] = &["CLS", "RET", "SYS", "JP", "CALL", "SE", "SNE", "LD", "ADD", "OR", "AND", "XOR", "SUB", "SHR", "SUBN", "SHL", "RND", "DRW", "SKP", "SKNP"];
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct JumpLabel {
     name: String, // Name in source code
     address: u16, // Address in memory
@@ -20,8 +24,6 @@ struct AliasLabel {
     from: String, // Change from this
     to: String, // To this
 }
-
-
 
 // Make sure register is 0-F
 fn register(input: &str) -> Result<String> {
@@ -123,7 +125,7 @@ fn preprocess(file: String) -> (Vec<String>, Vec<AliasLabel>, Vec<JumpLabel>) {
                 } else {
                     // Normalize data to hex
                     for (_idx, data) in split.iter().enumerate() {
-                        let data = num(data, 2).unwrap();
+                        let data = format!("0X{}",num(data, 2).unwrap());
                         jump_labels[tracking_idx].size += 2; // Add size
                         jump_labels[tracking_idx].instructions.push(data); // Add size
                     }
@@ -171,7 +173,8 @@ fn decode(line: &str, aliases: &Vec<AliasLabel>, jumps: &Vec<JumpLabel>) -> Resu
             if split[1] == jump.name {
                 // Addresses are always 3 nibbles long for one 0 is needed to pad
                 let address = format!("0{:X}", jump.address);
-                return Ok(address);
+                //return Ok(address);
+                return Ok("".to_string());
             }
         }
         return Err(anyhow!("Unknown label : {}", split[1]));
@@ -202,7 +205,7 @@ fn decode(line: &str, aliases: &Vec<AliasLabel>, jumps: &Vec<JumpLabel>) -> Resu
             let num = num(split[i], 2)?;
             data.push_str(&num);
         }
-        return Ok(data.replace("0X", ""));
+        return Ok(data);
     }
 
 
@@ -297,18 +300,24 @@ fn decode(line: &str, aliases: &Vec<AliasLabel>, jumps: &Vec<JumpLabel>) -> Resu
     }
 }
 
+fn write_bin(path: &str, data: Vec<u8>) -> Result<(), anyhow::Error> {
+    let mut file = std::fs::File::create(path)?;
+    file.write_all(&data)?;
+    Ok(())
+}
+
 
 fn main() {
     // Parse command line arguments
     let args: Vec<String> = std::env::args().collect();
 
     // Init memory map
-    //let mut memory: [u8; MAX_MEMORY] = [0; MAX_MEMORY];
+    let mut memory: [u8; MAX_MEMORY] = [0; MAX_MEMORY];
 
     // Read file
     let file = std::fs::read_to_string(&args[1]).expect("Unable to read file");
     let (mut preprocessed, aliases, jumps) = preprocess(file);
-    for (idx, line) in preprocessed.iter_mut().enumerate() {
+    /*for (idx, line) in preprocessed.iter_mut().enumerate() {
         let d = decode(line, &aliases, &jumps);
         if d.is_err() {
             let err_msg = format!("Error on line {} ({})", idx, line);
@@ -316,6 +325,46 @@ fn main() {
             return;
         }
         let d = d.unwrap();
-        println!(" {:30} | {}", line, d);
+
+        if d.len() == 0 {
+            continue;
+        }
+
+        if d.len() % 2 != 0 {
+            let err_msg = format!("Error on line {} ({})", idx, line);
+            println!("{} | {}", err_msg, d);
+            return;
+        }
+
+        print!("0x{:04X} | {} | ", PROGRAM_START + idx, line);
+        // Take two letters at a time
+        for i in (0..d.len()).step_by(2) {
+            let byte = u8::from_str_radix(&d[i..i+2], 16).unwrap();
+            println!("0x{:04X} | 0x{:02X}", PROGRAM_START + idx + i/2, byte);
+            memory[PROGRAM_START + idx + i/2] = byte;
+        }
+    }*/
+    let jumps_copy = jumps.clone();
+    for label in jumps {
+        let mut offset = 0;
+        for instruction in label.instructions {
+            let decoded = decode(&instruction, &aliases, &jumps_copy).unwrap();
+            let address = label.address + offset;
+            println!("0x{:04X} | {:30} | {}", address, instruction, decoded);
+            match decoded.len() {
+                0 => continue,
+                2 => { let byte = u8::from_str_radix(&decoded, 16).unwrap();
+                       memory[address as usize] = byte;
+                       offset += 1;},
+                4 => { let byte1 = u8::from_str_radix(&decoded[0..2], 16).unwrap();
+                       let byte2 = u8::from_str_radix(&decoded[2..4], 16).unwrap();
+                       memory[address as usize] = byte1;
+                       memory[address as usize + 1] = byte2;
+                       offset += 2;
+                }
+                _ => continue,
+            }
+        }
     }
+    write_bin(&args[2], memory.to_vec()).unwrap();
 }
